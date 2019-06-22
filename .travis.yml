@@ -1,0 +1,17 @@
+language: go
+
+# Support tip and current.
+# Requires at least 1.12, as it uses reflect.Value.MapRange()
+go:
+  - 1.12
+  - tip
+
+# Datachan doesn't uses anything outside standard library
+install: true
+
+notifications:
+  email: false
+
+script:
+  - go test -v ./...
+  - go test -v -race ./...
