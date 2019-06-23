@@ -87,7 +87,7 @@ func (s *Stage) Map(workers int, f T) *Stage {
 		panic(fmt.Sprintf("Input of Map stage function missmatch. Expected %v, found %v", s.output.Type().Elem(), itype))
 	}
 
-	output := makeChannel(otype.Elem(), reflect.BothDir, 0)
+	output := makeChannel(otype.Elem(), reflect.BothDir, workers)
 	wg := sync.WaitGroup{}
 	var executor func()
 	executor = func() {
@@ -118,8 +118,8 @@ func (s *Stage) Map(workers int, f T) *Stage {
 
 // Sink returns a <-chan interface{} that can be used to retrieve the
 // computation result, one record at a time.
-func (s *Stage) Sink() <-chan T {
-	output := make(chan T)
+func (s *Stage) Sink(bufferSize int) <-chan T {
+	output := make(chan T, bufferSize)
 	go func() {
 		for e, ok := s.output.Recv(); ok; e, ok = s.output.Recv() {
 			output <- e.Interface()
@@ -131,8 +131,8 @@ func (s *Stage) Sink() <-chan T {
 
 // Tee duplicates the output of one stage into two stages.
 func (s *Stage) Tee() (*Stage, *Stage) {
-	o1 := reflect.MakeChan(s.output.Type(), 0)
-	o2 := reflect.MakeChan(s.output.Type(), 0)
+	o1 := reflect.MakeChan(s.output.Type(), ChanBufferDefault)
+	o2 := reflect.MakeChan(s.output.Type(), ChanBufferDefault)
 	go func() {
 		for e, ok := s.output.Recv(); ok; e, ok = s.output.Recv() {
 			o1.Send(e)
@@ -148,7 +148,7 @@ func (s *Stage) Tee() (*Stage, *Stage) {
 // must have the same output type as the previous one, that is the one that determines
 // the stage output type.
 func (s *Stage) Merge(stages ...*Stage) *Stage {
-	output := reflect.MakeChan(s.output.Type(), 0)
+	output := reflect.MakeChan(s.output.Type(), ChanBufferDefault)
 
 	go func() {
 		cases := make([]reflect.SelectCase, 0, len(stages)+1)
@@ -209,7 +209,7 @@ func (s *Stage) Filter(workers int, f T) *Stage {
 		panic("Filter function output must be boolean")
 	}
 
-	output := reflect.MakeChan(s.output.Type(), 0)
+	output := reflect.MakeChan(s.output.Type(), ChanBufferDefault)
 	wg := sync.WaitGroup{}
 	var executor func()
 	executor = func() {

@@ -2,9 +2,9 @@ package datachan
 
 import (
 	"container/heap"
-	"os"
 	"reflect"
 	"sort"
+	"sync"
 )
 
 // Sort sorts the output of the previous stage in ascending order,
@@ -31,31 +31,34 @@ func (s *Stage) Sort(MaxBeforeSpill int, keyer T) *Stage {
 		panic("Reduce function output must support method Key(T)Comparable")
 	}
 
-	output := reflect.MakeChan(s.output.Type(), 0)
+	output := reflect.MakeChan(s.output.Type(), MaxBeforeSpill)
+
+	readersChan := make(chan (<-chan *keyValuePair), 16)
+	filesWG := sync.WaitGroup{}
 
 	var executor func()
 	executor = func() {
 		// Process and accumulate all the inputs in batches
 		accArr := make([]*keyValuePair, 0, MaxBeforeSpill)
-		tmpFiles := make([]string, 0)
-		defer func(files []string) {
-			for _, f := range files {
-				os.Remove(f)
-			}
-		}(tmpFiles)
+
 		for e, ok := s.output.Recv(); ok; e, ok = s.output.Recv() {
 			eKey := keyFun.Call([]reflect.Value{e})[0]
-			pv := &keyValuePair{
-				Key:   eKey.Interface(),
-				Value: e.Interface(),
-			}
+
+			pv := keyValuePairPool.Get().(*keyValuePair)
+			pv.Key = eKey.Interface()
+			pv.Value = e.Interface()
+
 			accArr = append(accArr, pv)
 
 			// Spill if too much records are on memory
 			if len(accArr) >= MaxBeforeSpill {
-				sort.Sort(sortByKey(accArr))
-				tmpName := spillKeyValuePairToDisk(accArr)
-				tmpFiles = append(tmpFiles, tmpName)
+				filesWG.Add(1)
+				go func(partialArray []*keyValuePair) {
+					sort.Stable(sortByKey(partialArray))
+					tmpName := spillKeyValuePairToDisk(partialArray)
+					readersChan <- readKeyValuePairFromDisk(tmpName)
+					filesWG.Done()
+				}(accArr)
 
 				accArr = make([]*keyValuePair, 0, MaxBeforeSpill)
 			}
@@ -63,17 +66,23 @@ func (s *Stage) Sort(MaxBeforeSpill int, keyer T) *Stage {
 
 		// At this point all the input have been partially sorted
 		// and a final merge sort is pending
-		sort.Sort(sortByKey(accArr))
-
-		readersChan := make([]<-chan *keyValuePair, 0, len(tmpFiles)+1)
-		for _, tmpFile := range tmpFiles {
-			readersChan = append(readersChan, readKeyValuePairFromDisk(tmpFile))
+		if len(accArr) > 0 {
+			sort.Sort(sortByKey(accArr))
+			readersChan <- readKeyValuePairFromMemory(accArr)
 		}
-		readersChan = append(readersChan, readKeyValuePairFromMemory(accArr))
+		filesWG.Done()
+	}
+
+	var sortMerger func()
+	sortMerger = func() {
+		kvProviders := make([]<-chan *keyValuePair, 0)
+		for kvProvider := range readersChan {
+			kvProviders = append(kvProviders, kvProvider)
+		}
 
 		// Generate the priority queue and fill it
 		pq := make(kvPairPriorityQueue, 0, len(readersChan))
-		for _, ch := range readersChan {
+		for _, ch := range kvProviders {
 			chValue, ok := <-ch
 			if ok {
 				pq = append(pq, &kvMerge{
@@ -92,7 +101,13 @@ func (s *Stage) Sort(MaxBeforeSpill int, keyer T) *Stage {
 		output.Close()
 	}
 
+	filesWG.Add(1)
 	go executor()
+	go func() {
+		filesWG.Wait()
+		close(readersChan)
+	}()
+	go sortMerger()
 
 	return &Stage{output}
 }

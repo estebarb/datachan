@@ -1,0 +1,56 @@
+package datachan
+
+import (
+	"log"
+	"reflect"
+)
+
+// FromStringSlice returns a stage seeded with strings
+// in the array.
+func FromStringSlice(input []string) *Stage {
+	output := make(chan string)
+
+	go func() {
+		for _, v := range input {
+			output <- v
+		}
+		close(output)
+	}()
+
+	return Source(output)
+}
+
+// Pipe sends the output of the previous stage to a channel,
+// and optionally closes the channel after the transmision is done.
+//
+// This is useful for nesting datachan flows, for example, within
+// a Map operation.
+func (s *Stage) Pipe(output T, close bool) {
+	value := reflect.ValueOf(output)
+	if value.Kind() != reflect.Chan {
+		panic("Pipe argument must be a channel")
+	}
+
+	for v, ok := s.output.Recv(); ok; v, ok = s.output.Recv() {
+		value.Send(v)
+	}
+
+	if close {
+		value.Close()
+	}
+}
+
+// LogCompletion logs when the previous stage finished. Useful for logging or debugging
+func (s *Stage) LogCompletion(name string, bufferSize int) *Stage {
+	output := reflect.MakeChan(s.output.Type(), bufferSize)
+
+	go func() {
+		for v, ok := s.output.Recv(); ok; v, ok = s.output.Recv() {
+			output.Send(v)
+		}
+		log.Println("Finished stage", name)
+		output.Close()
+	}()
+
+	return &Stage{output}
+}

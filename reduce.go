@@ -9,6 +9,11 @@ import (
 	"log"
 	"os"
 	"reflect"
+	"sync"
+)
+
+const (
+	ChanBufferDefault = 4096
 )
 
 type keyValuePair struct {
@@ -16,11 +21,17 @@ type keyValuePair struct {
 	Value interface{}
 }
 
+var keyValuePairPool = sync.Pool{
+	New: func() interface{} {
+		return new(keyValuePair)
+	},
+}
+
 // Reduce takes a number of records to accumulate before spilling to disk,
 // and a function that reduces those records. The reduce function must be
 // func (key T0, acc T1, value T1) T1
 func (s *Stage) Reduce(MaxBeforeSpill int, keyer, f T) *Stage {
-	return s.Combiner(MaxBeforeSpill, keyer, f).Sort(MaxBeforeSpill, keyer).Combiner(1, keyer, f)
+	return s.Combiner(MaxBeforeSpill, keyer, f).Sort(MaxBeforeSpill, keyer).Fold(1, keyer, f)
 }
 
 func (p *keyValuePair) keyEquals(q *keyValuePair) bool {
@@ -84,8 +95,10 @@ func spillKeyValuePairToDisk(arr []*keyValuePair) string {
 	defer bufTmp.Flush()
 
 	enc := gob.NewEncoder(bufTmp)
-	for _, v := range arr {
+	for k, v := range arr {
 		err := enc.Encode(v)
+		keyValuePairPool.Put(v)
+		arr[k] = nil
 		if err != nil {
 			panic(fmt.Sprint("Unable to encode", v, ":", err))
 		}
@@ -95,9 +108,11 @@ func spillKeyValuePairToDisk(arr []*keyValuePair) string {
 }
 
 func readKeyValuePairFromDisk(file string) <-chan *keyValuePair {
-	output := make(chan *keyValuePair)
+	// The buffer value was selected testing with a Word Count program
+	output := make(chan *keyValuePair, ChanBufferDefault)
 
 	go func() {
+		defer os.Remove(file)
 		fd, err := os.Open(file)
 		if err != nil {
 			log.Fatalln(err)
@@ -108,15 +123,15 @@ func readKeyValuePairFromDisk(file string) <-chan *keyValuePair {
 
 		more := true
 		for more {
-			var data keyValuePair
-			err := dec.Decode(&data)
+			data := keyValuePairPool.Get().(*keyValuePair)
+			err := dec.Decode(data)
 			if err != nil && err != io.EOF {
 				log.Fatal(err)
 			} else if err == io.EOF {
 				more = false
 				close(output)
 			} else {
-				output <- &data
+				output <- data
 			}
 		}
 	}()

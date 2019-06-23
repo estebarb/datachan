@@ -24,7 +24,7 @@ func generateInts(limit int) chan int {
 func TestSource(t *testing.T) {
 	in := generateInts(5)
 	src := Source(in)
-	sink := src.Sink()
+	sink := src.Sink(1)
 	for i := 0; i < 5; i++ {
 		v := <-sink
 		if v.(int) != i {
@@ -39,7 +39,7 @@ func TestMap(t *testing.T) {
 	mapper := src.Map(2, func(v int, output chan<- int) {
 		output <- v + v
 	})
-	sink := mapper.Sink()
+	sink := mapper.Sink(1)
 	acc := 0
 	for i := 0; i < 5; i++ {
 		acc += (<-sink).(int)
@@ -65,7 +65,7 @@ func TestReduce(t *testing.T) {
 		func(key int, acc *kvii, value *kvii) *kvii {
 			acc.Value += value.Value
 			return acc
-		}).Sink()
+		}).Sink(1)
 
 	acc0 := 0
 	acc1 := 0
@@ -101,7 +101,7 @@ func TestReduceBigger(t *testing.T) {
 		func(key int, acc *kvii, value *kvii) *kvii {
 			acc.Value += value.Value
 			return acc
-		}).Sink()
+		}).Sink(1)
 
 	acc0 := 0
 	acc1 := 0
@@ -148,7 +148,7 @@ func TestCombiner(t *testing.T) {
 		},
 		func(key int, acc int, value int) int {
 			return acc + value
-		}).Sink()
+		}).Sink(1)
 
 	obtained := make([]int, limit)
 	for i := 0; i < limit; i++ {
@@ -175,7 +175,7 @@ func TestCombinerSorter(t *testing.T) {
 		keyer,
 		func(key int, acc int, value int) int {
 			return acc + value
-		}).Sort(4, keyer).Sink()
+		}).Sort(4, keyer).Sink(1)
 
 	obtained := make([]int, limit)
 	for i := 0; i < limit; i++ {
@@ -207,7 +207,7 @@ func TestReduceWithBasicSpilling(t *testing.T) {
 		},
 		func(key int, acc int, value int) int {
 			return acc + value
-		}).Sink()
+		}).Sink(1)
 
 	obtained := make([]int, limit)
 	for i := 0; i < limit; i++ {
@@ -246,7 +246,7 @@ func TestReduceWithSpilling(t *testing.T) {
 		func(key int, acc *kvii, value *kvii) *kvii {
 			acc.Value += value.Value
 			return acc
-		}).Sink()
+		}).Sink(1)
 
 	obtained := make([]int, groups)
 	for i := 0; i < groups; i++ {
@@ -279,7 +279,7 @@ func TestTee(t *testing.T) {
 	f1, f2 := Source(generateInts(total)).Tee()
 	wg := sync.WaitGroup{}
 	checker := func(id string, s *Stage) {
-		sink := s.Sink()
+		sink := s.Sink(1)
 		i := 0
 		for value := range sink {
 			if i != value {
@@ -305,7 +305,7 @@ func TestTeeMerge(t *testing.T) {
 	final := f1.Merge(f2)
 	var totalSum int
 
-	for iv := range final.Sink() {
+	for iv := range final.Sink(1) {
 		totalSum += iv.(int)
 	}
 
@@ -318,7 +318,7 @@ func TestStage_Filter(t *testing.T) {
 	limit := 10000
 	flow := Source(generateInts(limit)).Filter(10, func(value int) bool {
 		return value%2 == 0
-	}).Sink()
+	}).Sink(1)
 
 	acc := 0
 	for value := range flow {
