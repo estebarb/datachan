@@ -54,7 +54,7 @@ func (s *Stage) Sort(MaxBeforeSpill int, keyer T) *Stage {
 			if len(accArr) >= MaxBeforeSpill {
 				filesWG.Add(1)
 				go func(partialArray []*keyValuePair) {
-					sort.Stable(sortByKey(partialArray))
+					sort.Sort(sortByKey(partialArray))
 					tmpName := spillKeyValuePairToDisk(partialArray)
 					readersChan <- readKeyValuePairFromDisk(tmpName)
 					filesWG.Done()
