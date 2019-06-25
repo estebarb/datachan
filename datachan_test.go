@@ -340,3 +340,13 @@ func TestStage_Filter(t *testing.T) {
 		t.Fatal("Sum expected to be", expected, "got", acc)
 	}
 }
+
+func TestStage_Count(t *testing.T) {
+	limit := 10000
+	flow := Source(generateInts(limit)).Count()
+
+	processed := int(<-flow)
+	if limit != processed {
+		t.Fatal("Expected ", limit, "items, counted", processed)
+	}
+}

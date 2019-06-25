@@ -54,3 +54,19 @@ func (s *Stage) LogCompletion(name string, bufferSize int) *Stage {
 
 	return &Stage{output}
 }
+
+// Count returns the count of elements entering from previous stage. It is best used with Tee.
+func (s *Stage) Count() <-chan uint {
+	output := make(chan uint)
+
+	go func() {
+		count := uint(0)
+		for _, ok := s.output.Recv(); ok; _, ok = s.output.Recv() {
+			count++
+		}
+		output <- count
+		close(output)
+	}()
+
+	return output
+}
