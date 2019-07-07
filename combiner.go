@@ -56,9 +56,12 @@ func (s *Stage) Fold(MaxBeforeSpill int, keyer, f T) *Stage {
 				// Spill BEFORE inserting if too much records are on memory
 				// This allows to implement Reduce as:
 				// Combiner(X,...).Sort(...).Fold(1,...)
-				if accMap.Len()+1 >= MaxBeforeSpill {
-					spillCombinerToChannel(accMap, output, nil)
-					accMap = makeMap(keyFun.Type().Out(0), tf.Out(0))
+				if accMap.Len() >= 1 {
+					iter := accMap.MapRange()
+					for iter.Next() {
+						output.Send(iter.Value())
+						accMap.SetMapIndex(iter.Key(), reflect.Value{})
+					}
 				}
 				accMap.SetMapIndex(eKey[0], e)
 			}
@@ -66,8 +69,11 @@ func (s *Stage) Fold(MaxBeforeSpill int, keyer, f T) *Stage {
 
 		// At this point all the input have been partially reduced
 		// and a final reduction is pending
-		spillCombinerToChannel(accMap, output, nil)
-		accMap = makeMap(keyFun.Type().Out(0), tf.Out(0))
+		iter := accMap.MapRange()
+		for iter.Next() {
+			output.Send(iter.Value())
+			accMap.SetMapIndex(iter.Key(), reflect.Value{})
+		}
 
 		wg.Wait()
 		output.Close()

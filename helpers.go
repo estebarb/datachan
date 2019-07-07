@@ -70,3 +70,16 @@ func (s *Stage) Count() <-chan uint {
 
 	return output
 }
+
+// Drop drops all the elements from previous stage. It returns the same type as input.
+func (s *Stage) Drop(bufferSize int) *Stage {
+	output := reflect.MakeChan(s.output.Type(), bufferSize)
+
+	go func() {
+		for _, ok := s.output.Recv(); ok; _, ok = s.output.Recv() {
+		}
+		output.Close()
+	}()
+
+	return &Stage{output}
+}

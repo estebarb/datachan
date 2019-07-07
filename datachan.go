@@ -96,7 +96,7 @@ func (s *Stage) Map(workers int, f T) *Stage {
 		for e, ok := s.output.Recv(); ok; e, ok = s.output.Recv() {
 			value.Call([]reflect.Value{e, output})
 			i++
-			if i > 10000 {
+			if i > 100 {
 				wg.Add(1)
 				go executor()
 				return
