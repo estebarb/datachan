@@ -40,7 +40,7 @@ func (s *Stage) Sort(MaxBeforeSpill int, keyer T) *Stage {
 
 	output := reflect.MakeChan(s.output.Type(), MaxBeforeSpill)
 
-	readersChan := make(chan string, 16)
+	readersChan := make(chan interface{}, 16)
 	filesWG := sync.WaitGroup{}
 
 	var executor func()
@@ -57,29 +57,38 @@ func (s *Stage) Sort(MaxBeforeSpill int, keyer T) *Stage {
 
 			accArr = append(accArr, pv)
 
-			// Spill if too much records are on memory
-			if len(accArr) >= MaxBeforeSpill {
+			if len(accArr) >= MaxBeforeSpill/2 {
 				filesWG.Add(1)
 				go executor()
-				break
+			}
+
+			// Spill if too much records are on memory
+			if len(accArr) >= MaxBeforeSpill {
+				readersChan <- spillKeyValuePairToDisk(accArr)
+				filesWG.Done()
+				return
 			}
 		}
 
 		sort.Sort(sortByKey(accArr))
-		tmpName := spillKeyValuePairToDisk(accArr)
-		readersChan <- tmpName
+		readersChan <- readKeyValuePairFromMemory(accArr)
 
 		filesWG.Done()
 	}
 
 	var sortMerger func()
 	sortMerger = func() {
+		kvProviders := make([]<-chan *keyValuePair, 0)
 		kvProvidersFiles := make([]string, 0)
 		for kvProvider := range readersChan {
-			kvProvidersFiles = append(kvProvidersFiles, kvProvider)
+			switch kvProvider.(type) {
+			case string:
+				kvProvidersFiles = append(kvProvidersFiles, kvProvider.(string))
+			case <-chan *keyValuePair:
+				kvProviders = append(kvProviders, kvProvider.(<-chan *keyValuePair))
+			}
 		}
 
-		kvProviders := make([]<-chan *keyValuePair, 0)
 		for _, kvProvider := range kvProvidersFiles {
 			kvProviders = append(kvProviders, readKeyValuePairFromDisk(kvProvider))
 		}
@@ -233,4 +242,63 @@ func readKeyValuePairFromMemory(arr []*keyValuePair) <-chan *keyValuePair {
 	}()
 
 	return output
+}
+
+func (s *Stage) Top(N int, keyer T) *Stage {
+	keyFun := reflect.ValueOf(keyer)
+	if keyFun.Kind() != reflect.Func {
+		panic("Reduce Keyer argument must be a function")
+	}
+	if keyFun.Type().NumIn() != 1 {
+		panic("Reduce function output must support method Key(T)Comparable")
+	}
+	if !keyFun.Type().Out(0).Comparable() {
+		panic("Reduce function output must support method Key(T)Comparable")
+	}
+	if keyFun.Type().NumOut() != 1 {
+		panic("Reduce function output must support method Key(T)Comparable")
+	}
+
+	output := reflect.MakeChan(s.output.Type(), N)
+
+	var executor func()
+	executor = func() {
+		// Process and accumulate all the inputs in batches
+		pq := make(TopKeyValuePriorityQueue, 0, N)
+		heap.Init(&pq)
+
+		for e, ok := s.output.Recv(); ok; e, ok = s.output.Recv() {
+			eKey := keyFun.Call([]reflect.Value{e})[0]
+
+			pv := keyValuePairPool.Get().(*keyValuePair)
+			pv.Key = eKey.Interface()
+			pv.Value = e.Interface()
+
+			node := TopkeyValuePriorityQueueNodePool.Get().(*TopkeyValuePriorityQueueNode)
+			node.value = pv
+
+			heap.Push(&pq, node)
+			for pq.Len() > N {
+				node = heap.Pop(&pq).(*TopkeyValuePriorityQueueNode)
+				node.value.Value = nil
+				node.value.Key = nil
+				keyValuePairPool.Put(node.value)
+				node.value = nil
+				TopkeyValuePriorityQueueNodePool.Put(node)
+			}
+		}
+
+		for pq.Len() > 0 {
+			node := heap.Pop(&pq).(*TopkeyValuePriorityQueueNode)
+			output.Send(reflect.ValueOf(node.value.Value))
+			keyValuePairPool.Put(node.value)
+			TopkeyValuePriorityQueueNodePool.Put(node)
+		}
+
+		output.Close()
+	}
+
+	go executor()
+
+	return &Stage{output}
 }

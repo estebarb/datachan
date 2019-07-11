@@ -144,6 +144,24 @@ func (s *Stage) Tee() (*Stage, *Stage) {
 	return &Stage{o1}, &Stage{o2}
 }
 
+// Tee3 triplicates the output of one stage into two stages.
+func (s *Stage) Tee3() (*Stage, *Stage, *Stage) {
+	o1 := reflect.MakeChan(s.output.Type(), ChanBufferDefault)
+	o2 := reflect.MakeChan(s.output.Type(), ChanBufferDefault)
+	o3 := reflect.MakeChan(s.output.Type(), ChanBufferDefault)
+	go func() {
+		for e, ok := s.output.Recv(); ok; e, ok = s.output.Recv() {
+			o1.Send(e)
+			o2.Send(e)
+			o3.Send(e)
+		}
+		o1.Close()
+		o2.Close()
+		o3.Close()
+	}()
+	return &Stage{o1}, &Stage{o2}, &Stage{o3}
+}
+
 // Merge sends the output of several stages into a single one. The input stages
 // must have the same output type as the previous one, that is the one that determines
 // the stage output type.

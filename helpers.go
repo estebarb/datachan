@@ -83,3 +83,29 @@ func (s *Stage) Drop(bufferSize int) *Stage {
 
 	return &Stage{output}
 }
+
+func (s *Stage) Limit(limit int) *Stage {
+	if limit < 0 {
+		return s
+	}
+
+	output := reflect.MakeChan(s.output.Type(), limit)
+
+	go func() {
+		i := 0
+		for value, ok := s.output.Recv(); ok; value, ok = s.output.Recv() {
+			if i < limit {
+				i++
+				output.Send(value)
+			} else if i == limit {
+				output.Close()
+				i++
+			}
+		}
+		if i < limit {
+			output.Close()
+		}
+	}()
+
+	return &Stage{output}
+}
