@@ -57,14 +57,12 @@ func (s *Stage) Sort(MaxBeforeSpill int, keyer T) *Stage {
 
 			accArr = append(accArr, pv)
 
-			if len(accArr) >= MaxBeforeSpill/2 {
-				filesWG.Add(1)
-				go executor()
-			}
-
 			// Spill if too much records are on memory
 			if len(accArr) >= MaxBeforeSpill {
+				sort.Sort(sortByKey(accArr))
 				readersChan <- spillKeyValuePairToDisk(accArr)
+				filesWG.Add(1)
+				go executor()
 				filesWG.Done()
 				return
 			}
