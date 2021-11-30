@@ -1,4 +1,4 @@
-// Package Datachan provides a Map Reduce like programming environment. It
+// Package datachan provides a Map Reduce like programming environment. It
 // takes care of type castings, chaining stages, launching workers,
 // spilling data to disk and other repetitive and bored tasks.
 //
